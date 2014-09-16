@@ -1,0 +1,217 @@
+From 9a23eafce8cabaacf2fb0cb13107083555ed689a Mon Sep 17 00:00:00 2001
+From: Sughosh Divanji <sdivanji@hawk.iit.edu>
+Date: Wed, 2 Jul 2014 01:05:52 +0530
+Subject: [PATCH 1/2] Sughosh_Divanji_A20276930_Syscall
+
+---
+ Makefile   |  2 +-
+ defs.h     |  2 +-
+ getcount.c | 12 ++++++------
+ proc.c     |  2 +-
+ proc.h     |  3 ++-
+ syscall.c  | 16 ++++++++++++++++
+ syscall.h  |  1 +
+ sysproc.c  | 10 ++++++++++
+ trap.c     |  3 +++
+ user.h     |  2 +-
+ usys.S     |  1 +
+ 11 files changed, 43 insertions(+), 11 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 8012888..133ca73 100644
+--- a/Makefile
++++ b/Makefile
+@@ -171,7 +171,7 @@ UPROGS=\
+ 	_wc\
+ 	_zombie\
+ 	_bigtest\
+-	#_getcount\
++	_getcount\
+ 
+ fs.img: mkfs README $(UPROGS)
+ 	./mkfs fs.img README $(UPROGS)
+diff --git a/defs.h b/defs.h
+index 23b1019..b4f8c26 100644
+--- a/defs.h
++++ b/defs.h
+@@ -145,7 +145,7 @@ int             argstr(int, char**);
+ int             fetchint(uint, int*);
+ int             fetchstr(uint, char**);
+ void            syscall(void);
+-
++extern struct spinlock countlock;
+ // timer.c
+ void            timerinit(void);
+ 
+diff --git a/getcount.c b/getcount.c
+index 1ecb5f4..b833945 100644
+--- a/getcount.c
++++ b/getcount.c
+@@ -5,15 +5,15 @@
+ int
+ main(int argc, char *argv[])
+ {
+-  printf(1, "initial fork count %d\n", getcount(SYS_fork));
++  printf(1, "initial fork count %d\n", getcount());
+   if (fork() == 0) {
+-    printf(1, "child fork count %d\n", getcount(SYS_fork));
+-    printf(1, "child write count %d\n", getcount(SYS_write));
++    printf(1, "child fork count %d\n", getcount());
++    printf(1, "child write count %d\n", getcount());
+   } else {
+     wait();
+-    printf(1, "parent fork count %d\n", getcount(SYS_fork));
+-    printf(1, "parent write count %d\n", getcount(SYS_write));
++    printf(1, "parent fork count %d\n", getcount());
++    printf(1, "parent write count %d\n", getcount());
+   }
+-  printf(1, "wait count %d\n", getcount(SYS_wait));
++  printf(1, "wait count %d\n", getcount());
+   exit();
+ }
+diff --git a/proc.c b/proc.c
+index bcdbfea..4bb775a 100644
+--- a/proc.c
++++ b/proc.c
+@@ -182,7 +182,7 @@ exit(void)
+ 
+   iput(proc->cwd);
+   proc->cwd = 0;
+-
++  proc->count=0;
+   acquire(&ptable.lock);
+ 
+   // Parent might be sleeping in wait().
+diff --git a/proc.h b/proc.h
+index 6561ad3..95d73fb 100644
+--- a/proc.h
++++ b/proc.h
+@@ -66,7 +66,8 @@ struct proc {
+   struct file *ofile[NOFILE];  // Open files
+   struct inode *cwd;           // Current directory
+   char name[16];               // Process name (debugging)
+-};
++  int count;                   // No. of syscall count per process
++ };
+ 
+ // Process memory is laid out contiguously, low addresses first:
+ //   text
+diff --git a/syscall.c b/syscall.c
+index 799ebc2..49a9dea 100644
+--- a/syscall.c
++++ b/syscall.c
+@@ -98,6 +98,7 @@ extern int sys_unlink(void);
+ extern int sys_wait(void);
+ extern int sys_write(void);
+ extern int sys_uptime(void);
++extern int sys_getcount(void);
+ 
+ static int (*syscalls[])(void) = {
+ [SYS_fork]    sys_fork,
+@@ -121,16 +122,31 @@ static int (*syscalls[])(void) = {
+ [SYS_link]    sys_link,
+ [SYS_mkdir]   sys_mkdir,
+ [SYS_close]   sys_close,
++[SYS_getcount] sys_getcount,
+ };
+ 
++
++// Check if initialized
++int init = 0;
++// Initializes data structures for getcount()
++void getcountinit() {
++init = 1;
++}
++
++
+ void
+ syscall(void)
+ {
++  if (init == 0) {
++    getcountinit();
++    init = 1;
++  }
+   int num;
+ 
+   num = proc->tf->eax;
+   if(num > 0 && num < NELEM(syscalls) && syscalls[num]) {
+     proc->tf->eax = syscalls[num]();
++     proc->count++;
+   } else {
+     cprintf("%d %s: unknown sys call %d\n",
+             proc->pid, proc->name, num);
+diff --git a/syscall.h b/syscall.h
+index bc5f356..6f0a59c 100644
+--- a/syscall.h
++++ b/syscall.h
+@@ -20,3 +20,4 @@
+ #define SYS_link   19
+ #define SYS_mkdir  20
+ #define SYS_close  21
++#define SYS_getcount 22
+diff --git a/sysproc.c b/sysproc.c
+index c66339e..48db28b 100644
+--- a/sysproc.c
++++ b/sysproc.c
+@@ -88,3 +88,13 @@ sys_uptime(void)
+   release(&tickslock);
+   return xticks;
+ }
++
++int
++sys_getcount(void)
++{
++  uint xcount; 
++   acquire(&countlock);
++   xcount=proc->count;
++   release(&countlock);
++   return xcount;
++}
+diff --git a/trap.c b/trap.c
+index 3f80145..804ed2b 100644
+--- a/trap.c
++++ b/trap.c
+@@ -12,8 +12,10 @@
+ struct gatedesc idt[256];
+ extern uint vectors[];  // in vectors.S: array of 256 entry pointers
+ struct spinlock tickslock;
++struct spinlock countlock;
+ uint ticks;
+ 
++
+ void
+ tvinit(void)
+ {
+@@ -24,6 +26,7 @@ tvinit(void)
+   SETGATE(idt[T_SYSCALL], 1, SEG_KCODE<<3, vectors[T_SYSCALL], DPL_USER);
+   
+   initlock(&tickslock, "time");
++  initlock(&countlock, "count");
+ }
+ 
+ void
+diff --git a/user.h b/user.h
+index 9e26cf1..1be93bb 100644
+--- a/user.h
++++ b/user.h
+@@ -22,7 +22,7 @@ int getpid(void);
+ char* sbrk(int);
+ int sleep(int);
+ int uptime(void);
+-
++int getcount(void);
+ // ulib.c
+ int stat(char*, struct stat*);
+ char* strcpy(char*, char*);
+diff --git a/usys.S b/usys.S
+index 8bfd8a1..3cdc17e 100644
+--- a/usys.S
++++ b/usys.S
+@@ -29,3 +29,4 @@ SYSCALL(getpid)
+ SYSCALL(sbrk)
+ SYSCALL(sleep)
+ SYSCALL(uptime)
++SYSCALL(getcount)
+-- 
+1.8.5.2 (Apple Git-48)
+

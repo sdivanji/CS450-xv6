@@ -1,0 +1,118 @@
+From 0547a53a2fa7f2f7b74807ac50126d50d79521d8 Mon Sep 17 00:00:00 2001
+From: Sughosh Divanji <sdivanji@hawk.iit.edu>
+Date: Wed, 2 Jul 2014 02:54:25 +0530
+Subject: [PATCH 2/2] Sughosh_Divanji_A20276930_filesystem
+
+---
+ file.h |  2 +-
+ fs.c   | 46 ++++++++++++++++++++++++++++++++++++++++++----
+ fs.h   |  9 +++++----
+ 3 files changed, 48 insertions(+), 9 deletions(-)
+
+diff --git a/file.h b/file.h
+index c02f76c..0595ab7 100644
+--- a/file.h
++++ b/file.h
+@@ -21,7 +21,7 @@ struct inode {
+   short minor;
+   short nlink;
+   uint size;
+-  uint addrs[NDIRECT+1];
++  uint addrs[NDIRECT+3];
+ };
+ #define I_BUSY 0x1
+ #define I_VALID 0x2
+diff --git a/fs.c b/fs.c
+index 9d6dfd1..938f421 100644
+--- a/fs.c
++++ b/fs.c
+@@ -372,16 +372,54 @@ bmap(struct inode *ip, uint bn)
+       ip->addrs[NDIRECT] = addr = balloc(ip->dev);
+     bp = bread(ip->dev, addr);
+     a = (uint*)bp->data;
+-    if((addr = a[bn]) == 0){
+-      a[bn] = addr = balloc(ip->dev);
++    if((addr = a[(bn%NDIRECT)]) == 0){
++      a[(bn%NDIRECT)] = addr = balloc(ip->dev);
+       log_write(bp);
+     }
+     brelse(bp);
+     return addr;
+   }
+ 
+-  panic("bmap: out of range");
+-}
++  if(bn < 2*NINDIRECT){
++    // Load indirect block, allocating if necessary.
++    if((addr = ip->addrs[NDIRECT+1]) == 0)
++      ip->addrs[NDIRECT+1] = addr = balloc(ip->dev);
++    bp = bread(ip->dev, addr);
++    a = (uint*)bp->data;
++    if((addr = a[(bn%NDIRECT)]) == 0){
++      a[(bn%NDIRECT)] = addr = balloc(ip->dev);
++      log_write(bp);
++    }
++    brelse(bp);
++    return addr;
++  }
++
++if(bn < (NINDIRECT * NINDIRECT)){
++
++    // Load double indirect block, allocating if necessary.
++    if((addr = ip->addrs[INDIRECT]) == 0)
++    ip->addrs[INDIRECT] = addr = balloc(ip->dev);
++    bp = bread(ip->dev, addr);
++    a = (uint*)bp->data;
++
++    if((addr = a[(bn / NINDIRECT)]) == 0)
++      a[(bn / NINDIRECT)] = addr = balloc(ip->dev);
++      log_write(bp);
++    brelse(bp);
++    // Load indirect block, allocating if necessary.
++    bp = bread(ip->dev, addr);
++    a = (uint*)bp->data;
++
++    if((addr = a[(bn % NINDIRECT)]) == 0){
++      a[(bn % NINDIRECT)] = addr = balloc(ip->dev);
++      log_write(bp);
++    }
++    brelse(bp);
++    return addr;
++  }
++   panic("bmap: out of range");
++ }
++
+ 
+ // Truncate inode (discard contents).
+ // Only called when the inode has no links
+diff --git a/fs.h b/fs.h
+index f191d43..81346db 100644
+--- a/fs.h
++++ b/fs.h
+@@ -19,10 +19,11 @@ struct superblock {
+   uint nlog;         // Number of log blocks
+ };
+ 
+-#define NDIRECT 12
++#define NDIRECT 10
+ #define NINDIRECT (BSIZE / sizeof(uint))
+-#define MAXFILE (NDIRECT + NINDIRECT)
+-
++//#define MAXFILE (NDIRECT + NINDIRECT)
++#define MAXFILE (NDIRECT + (NINDIRECT*NINDIRECT))
++#define INDIRECT 12
+ // On-disk inode structure
+ struct dinode {
+   short type;           // File type
+@@ -30,7 +31,7 @@ struct dinode {
+   short minor;          // Minor device number (T_DEV only)
+   short nlink;          // Number of links to inode in file system
+   uint size;            // Size of file (bytes)
+-  uint addrs[NDIRECT+1];   // Data block addresses
++  uint addrs[NDIRECT+3];   // Data block addresses
+ };
+ 
+ // Inodes per block.
+-- 
+1.8.5.2 (Apple Git-48)
+
